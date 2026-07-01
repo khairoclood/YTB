@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import datetime
 import traceback
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)
 
 # Configuration
@@ -158,6 +158,26 @@ def download_audio_background(download_id, url, audio_only, format_choice):
         downloads[download_id]["status"] = "error"
         downloads[download_id]["message"] = f"Error: {str(e)}"
         print(f"Download error: {traceback.format_exc()}")
+
+
+@app.route('/', methods=['GET'])
+def index():
+    """Serve the main HTML file"""
+    html_file = Path('youtube_downloader_ui.html')
+    if html_file.exists():
+        with open(html_file, 'r', encoding='utf-8') as f:
+            return f.read()
+    return jsonify({"error": "UI file not found"}), 404
+
+
+@app.route('/youtube_downloader_ui.html', methods=['GET'])
+def serve_ui():
+    """Serve the UI HTML file"""
+    html_file = Path('youtube_downloader_ui.html')
+    if html_file.exists():
+        with open(html_file, 'r', encoding='utf-8') as f:
+            return f.read()
+    return jsonify({"error": "UI file not found"}), 404
 
 
 @app.route('/api/health', methods=['GET'])
@@ -310,6 +330,39 @@ def get_status():
         "files_count": len([f for f in files if f.is_file()]),
         "total_size_mb": round(total_size / (1024*1024), 2),
         "active_downloads": len([d for d in downloads.values() if d["status"] == "downloading"])
+    })
+
+
+@app.route('/api/diagnostics', methods=['GET'])
+def diagnostics():
+    """Diagnostic information for troubleshooting"""
+    import sys
+    
+    html_exists = Path('youtube_downloader_ui.html').exists()
+    downloader_exists = Path('youtube_arabic_downloader.py').exists()
+    
+    return jsonify({
+        "status": "ok",
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "server_running": True,
+        "files": {
+            "ui_html": html_exists,
+            "downloader_py": downloader_exists,
+        },
+        "endpoints": {
+            "home": "/",
+            "ui": "/youtube_downloader_ui.html",
+            "api": "/api/*",
+            "health": "/api/health",
+            "tracks": "/api/tracks",
+            "download": "/api/download",
+            "status": "/api/status",
+            "diagnostics": "/api/diagnostics"
+        },
+        "directories": {
+            "downloads": str(DOWNLOAD_DIR.absolute()),
+            "temp": str(TEMP_DIR.absolute()),
+        }
     })
 
 
