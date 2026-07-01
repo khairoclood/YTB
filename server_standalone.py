@@ -200,6 +200,19 @@ HTML_CONTENT = '''<!DOCTYPE html>
             background: #e0e0e0;
         }
 
+        .btn-download {
+            background: #4caf50;
+            color: white;
+            margin-top: 15px;
+            width: 100%;
+        }
+
+        .btn-download:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(76, 175, 80, 0.3);
+        }
+
         button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
@@ -324,6 +337,8 @@ HTML_CONTENT = '''<!DOCTYPE html>
     </div>
 
     <script>
+        let currentDownloadId = null;
+
         function selectOption(optionId) {
             document.getElementById(optionId).checked = true;
             document.querySelectorAll('.option-card').forEach(card => {
@@ -332,14 +347,31 @@ HTML_CONTENT = '''<!DOCTYPE html>
             document.getElementById(optionId).closest('.option-card').classList.add('selected');
         }
 
-        function showMessage(message, type = 'info') {
+        function showMessage(message, type = 'info', downloadId = null) {
             const messageDiv = document.getElementById('message');
             const classMap = {
                 'error': 'error-box',
                 'success': 'success-box',
                 'info': 'info-box'
             };
-            messageDiv.innerHTML = `<div class="${classMap[type]}">${message}</div>`;
+            
+            let html = `<div class="${classMap[type]}">${message}`;
+            
+            // Add download button if file is ready
+            if (type === 'success' && downloadId && (message.includes('ready') || message.includes('completed'))) {
+                html += `<br><br><button class="btn-download" onclick="downloadFile('${downloadId}')">📥 Download Your File Now</button>`;
+            }
+            
+            html += '</div>';
+            messageDiv.innerHTML = html;
+        }
+
+        function downloadFile(downloadId) {
+            // Direct download from server
+            const link = document.createElement('a');
+            link.href = `/api/download/${downloadId}/file`;
+            link.click();
+            showMessage('✅ File downloaded! Check your Downloads folder.', 'success');
         }
 
         function listTracks() {
@@ -378,7 +410,7 @@ HTML_CONTENT = '''<!DOCTYPE html>
                 return;
             }
 
-            showMessage('⏳ Starting download... Please wait (this may take a few minutes)', 'info');
+            showMessage('⏳ Starting download... This may take a few minutes depending on video length', 'info');
             
             fetch('/api/download', {
                 method: 'POST',
@@ -392,8 +424,8 @@ HTML_CONTENT = '''<!DOCTYPE html>
                 if (data.error) {
                     showMessage('❌ Error: ' + data.error, 'error');
                 } else {
-                    showMessage('✅ Download started! Downloading in background...', 'success');
-                    // Check status every 5 seconds
+                    currentDownloadId = data.download_id;
+                    showMessage('⏳ Processing your download... (this may take 3-10 minutes)', 'info');
                     checkDownloadStatus(data.download_id);
                 }
             })
@@ -406,13 +438,20 @@ HTML_CONTENT = '''<!DOCTYPE html>
                     .then(res => res.json())
                     .then(data => {
                         if (data.status === 'completed') {
-                            showMessage('✅ Download completed! File ready.', 'success');
+                            showMessage(`✅ Download completed! "${data.video_title}" has been processed and is ready for download. Please click the button below to download your file.`, 'success', downloadId);
                         } else if (data.status === 'error') {
                             showMessage('❌ Error: ' + data.message, 'error');
                         } else if (data.status === 'downloading') {
+                            showMessage(`⏳ Processing: ${data.message}`, 'info');
+                            checkDownloadStatus(downloadId);
+                        } else {
                             showMessage(`⏳ ${data.message}`, 'info');
                             checkDownloadStatus(downloadId);
                         }
+                    })
+                    .catch(err => {
+                        showMessage('⏳ Still downloading... (checking again in 10 seconds)', 'info');
+                        setTimeout(() => checkDownloadStatus(downloadId), 10000);
                     });
             }, 5000);
         }
@@ -420,7 +459,7 @@ HTML_CONTENT = '''<!DOCTYPE html>
         // Set initial selection
         document.addEventListener('DOMContentLoaded', () => {
             selectOption('arabic-audio');
-            showMessage('✅ Connected to server and ready to download!', 'success');
+            showMessage('✅ Connected! Ready to download Arabic audio from YouTube', 'success');
         });
     </script>
 </body>
@@ -628,6 +667,36 @@ def check_download_status(download_id):
         return jsonify({"error": "Download not found"}), 404
     
     return jsonify(downloads[download_id])
+
+
+@app.route('/api/download/<download_id>/file', methods=['GET'])
+def download_file_endpoint(download_id):
+    """Download the completed file from server to client"""
+    if download_id not in downloads:
+        return jsonify({"error": "Download not found"}), 404
+    
+    download_info = downloads[download_id]
+    
+    if download_info["status"] != "completed":
+        return jsonify({"error": f"Download not completed. Status: {download_info['status']}"}), 400
+    
+    filename = download_info.get("filename")
+    if not filename:
+        return jsonify({"error": "Filename not found"}), 400
+    
+    filepath = DOWNLOAD_DIR / filename
+    
+    if not filepath.exists():
+        return jsonify({"error": f"File not found: {filename}"}), 404
+    
+    try:
+        return send_file(
+            filepath,
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/status', methods=['GET'])
